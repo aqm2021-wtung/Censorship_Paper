@@ -1,0 +1,463 @@
+---
+title: "Censorship"
+author: "Wai Tak Tung, Karolin Schulze"
+date: "1/20/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+p_needed <-
+  c("knitr",
+    "MASS",
+    "separationplot",
+    "foreign"
+  )
+packages <- rownames(installed.packages())
+p_to_install <- p_needed[!(p_needed %in% packages)]
+if (length(p_to_install) > 0) {
+  install.packages(p_to_install)
+}
+sapply(p_needed, require, character.only = TRUE)
+library(stargazer)
+install.packages(c('tibble', 'dplyr', 'readr'))
+library("readxl")
+library("dplyr")
+
+```
+
+```{r, warning=FALSE, echo=FALSE}
+
+rm(list = ls())
+
+controls <- read.csv("Control_var.csv")
+controls <- controls[,-1]
+Approval <- read.csv("Approval.csv")
+Approval <- Approval[,-1]
+Media <- read.csv("Media Freedom.csv")
+Media <- Media[,-1]
+
+```
+
+## Merging Data
+
+```{r, echo=FALSE, warning= FALSE}
+
+dta1 <- left_join(Media, Approval, by=c("Year","Country"))
+
+dta1 <- dta1[dta1$Year>=2008 & dta1$Year <=2018,]
+
+dta2 <- left_join(dta1, controls,by=c("Year","Country"))
+
+dta3<- dta2 %>% distinct(Year,Country, .keep_all = TRUE)
+dta3 <-na.omit(dta2)
+
+write.csv(dta3, "Final_dta.csv")
+dta <- read.csv("Final_dta.csv")
+dta <- dta[,-1]
+
+#exclude bolivia to get a better dataset with polity2 8:10 and better pres:pm
+dta[dta$Country=="Bolivia",]
+dta <- dta3[-c(34:44),]
+
+write.csv(dta, "Final.csv")
+dta <- read.csv("Final.csv")
+dta <- dta[,-1]
+
+```
+
+
+```{r Results}
+
+colnames(dta)
+
+boxplot(dta$internet_censorship)
+hist(dta$internet_censorship)
+boxplot(dta$media_censorship)
+hist(dta$media_censorship)
+boxplot(dta$Approval_Rate)
+hist(dta$Approval_Rate)
+boxplot(dta$Internet)
+boxplot(dta$GDP_per_capita)
+hist(dta$media_corrupt)
+
+barplot(dta$Approval_Rate)
+
+plot(dta$int_filt_cap,
+     dta$int_shut_cap)
+abline(lm(dta$int_shut_cap~dta$int_filt_cap))
+
+par(mfrow=c(2,2))
+plot(dta$int_filt_cap,
+     dta$internet_censorship)
+abline(lm(dta$internet_censorship~dta$int_filt_cap))
+plot(dta$int_shut_cap,
+     dta$internet_censorship)
+abline(lm(dta$internet_censorship~dta$int_shut_cap))
+
+#int_filt_cap and int_shut_cap are vitually the same, so drop at least one
+
+#Distribution main variables
+
+pdf("Boxplots.pdf")
+par(mfrow = c(2,2))
+boxplot((dta$Approval_Rate),
+        main = "Public Opinion, 2008-2018",
+        xlab = "Government Approval in %")
+boxplot(dta$media_censorship,
+        main = "Government Censorship, 2008-2018",
+        xlab = "Broadcast & Print Media Censorship Effort")
+boxplot(dta$internet_censorship,
+        main = "Government Censorship, 2008-2018",
+        xlab = "Internet Censorship Effort")
+boxplot(dta$Internet,
+        main = "Internet Users 2008-2018",
+        xlab = "% of Internet Users in Population")
+dev.off()
+
+pdf("controls_int.pdf")
+par(mfrow = c(2,2), pty = "s")
+plot(dta$media_bias,
+     dta$Approval_Rate)
+abline(lm(dta$Approval_Rate~dta$media_bias))
+plot(dta$media_corrupt,
+     dta$Approval_Rate)
+abline(lm(dta$Approval_Rate~dta$media_corrupt))
+plot(dta$int_filt_cap,
+    dta$internet_censorship)
+abline(lm(dta$internet_censorship~dta$int_filt_cap))
+plot(dta$int_shut_cap,
+     dta$internet_censorship)
+abline(lm(dta$internet_censorship~dta$int_shut_cap))
+dev.off()
+
+```
+
+```{r}
+
+head(dta)
+names(dta)
+
+m1 <- lm(Approval_Rate ~ internet_censorship * Internet + media_censorship, data= dta)
+
+m2 <- lm(Approval_Rate ~ internet_censorship * Internet + media_censorship + media_corrupt, data= dta)
+
+m3 <- lm(Approval_Rate ~ internet_censorship * Internet + media_censorship * media_corrupt + GDP_growth + Resource, data= dta)
+
+summary(m1)
+summary(m2)
+summary(m3)
+
+head(dta)
+
+stargazer(m1, m2, m3)
+
+#summary statistics
+
+stargazer(dta)
+
+```
+
+```{r}
+
+#marginal effect
+
+pdf("margins.pdf")
+pred_lm <- function (b, x, z) {
+  preds <- matrix(NA, length(x), length(z))
+  for (i in 1:length(z)) {
+    preds[, i] <- b[1] + b[2] * x + b[3] * z[i] + b[4] * x * z[i]
+  }
+  return(preds)
+}
+
+b_con <- coef(m3)
+x_vals <- seq(min(dta$internet_censorship), max(dta$internet_censorship), length.out = 101)
+z_vals_con <- quantile(dta$Internet, 
+                       c(0, .01, .1, .25, .5, .75, .9, .99, 1))
+preds_con <- pred_lm(b_con, x_vals, z_vals_con)
+
+## Function for marginal effect 
+
+mfx_lm <- function (b, z) {
+  b[2] + b[8] * z
+}
+
+mfx_con <- mfx_lm(b_con, z_vals_con)
+
+se_mfx <- function (vcov, z) {
+  sqrt(vcov[2, 2] + z ^ 2 * vcov[8, 8] + 2 * z * vcov[8, 2])
+}
+
+vcov_con <- vcov(m3)
+se_mfx_con <- se_mfx(vcov_con, z_vals_con)
+
+plot (
+  x = z_vals_con,
+  y = mfx_con,
+  pch = 16,
+  xlab = "Internet Users",
+  ylab = bquote(frac(partialdiff ~ y, partialdiff ~ x)),
+  type = "n",
+  bty = "n",
+  las = 1,
+  main = "Marginal Effect of Internet Censorship on Approval",
+  xlim = c(0, 100),
+  ylim = c(-20,30),
+  bty = "n"
+)
+abline(h = 0, col = 'gray60', lwd = .5)
+
+
+for (i in 1:length(se_mfx_con)) {
+  points(x = z_vals_con[i],
+         y = mfx_con[i],
+         pch = 19)
+}
+for (i in 1:length(se_mfx_con)) {
+  segments(
+    z_vals_con[i],
+    mfx_con[i] + qnorm(.025) * se_mfx_con[i],
+    z_vals_con[i],
+    mfx_con[i] + qnorm(.975) * se_mfx_con[i],
+    lty = i
+  )
+}
+
+## Add contiguous lines for mfx and se's to the last plot
+## Compute first...
+z_vals_fine <-
+  seq(min(dta$Internet), max(dta$Internet), length.out = 101)
+mfx_fine <- mfx_lm(b_con, z_vals_fine)
+se_mfx_fine <- se_mfx(vcov_con, z_vals_fine)
+
+## ... then plot
+lines(z_vals_fine, mfx_fine)
+lines(z_vals_fine, mfx_fine + qnorm(.025) * se_mfx_fine, lty = 2)
+lines(z_vals_fine, mfx_fine + qnorm(.975) * se_mfx_fine, lty = 2)
+dev.off()
+
+```
+
+```{r}
+
+#Why censorship of traditional media does not work in democracies?
+
+
+pdf("media bias & corruption.pdf")
+par(mfrow = c(2, 2), # 2 x 2 pictures on one plot
+          pty = "s") 
+plot(dta$internet_censorship,
+     dta$Approval_Rate,
+     xlab = "Internet Censorship Effort",
+     ylab = "Government Approval")
+abline(lm(dta$Approval_Rate~dta$internet_censorship))
+
+plot(dta$government_censorship,
+     dta$Approval_Rate,
+     xlab = "Broadcast & Print Media Censorship Effort",
+     ylab = "Government Approval")
+abline(lm(dta$Approval_Rate~dta$government_censorship))
+
+plot(dta$Internet, 
+     dta$internet_censorship,
+     xlab = "% of Internet Users",
+     ylab = "Internet Censorship Effort")
+abline(lm(dta$internet_censorship~dta$Internet))
+
+plot(dta$media_corrupt, 
+     dta$government_censorship,
+     xlab = "Media corruption",
+     ylab = "Broadcast & Print Media Censorship Effort")
+abline(lm(dta$government_censorship~dta$media_corrupt))
+dev.off()
+
+plot(dta$media_bias,
+     dta$media_corrupt)
+abline(lm(dta$media_corrupt~dta$media_bias))
+
+mm <- lm(dta$government_censorship~dta$media_bias)
+summary(mm)
+
+summary(dta$government_censorship)
+```
+
+
+```{r}
+
+#Plot Government Censorshpip
+
+freesk <- dta$government_censorship[dta$Country =="South Korea"]
+freejp <- dta$government_censorship[dta$Country =="Japan"]
+freeaus <- dta$government_censorship[dta$Country == "Australia"]
+freeph <- dta$government_censorship[dta$Country == "Philippines"]
+freearg <- dta$government_censorship[dta$Country == "Argentina"]
+freebol <- dta$government_censorship[dta$Country == "Bolivia"]
+freebr <- dta$government_censorship[dta$Country == "Brazil"]
+freeus <- dta$government_censorship[dta$Country == "United States"]
+freebul <- dta$government_censorship[dta$Country == "Bulgaria"]
+freehu <- dta$government_censorship[dta$Country == "Hungary"]
+freefr <- dta$government_censorship[dta$Country == "France"]
+
+summary(dta$government_censorship)
+
+pdf("Government Censorship_plot.pdf")
+plot(x = yearsk, 
+     y = freesk,
+     xlab = "Year", 
+     ylab = "Government Censorship",
+     xlim = c(2008, 2018), 
+     ylim = c(0,3.5),
+     pch = 16,
+     main = "Freedom of Print and Broadcast Media",
+     type = "n")
+points(yearsk, freesk, col = 1)
+points(yearsk, freejp, col = 2)
+points(yearsk, freeaus, col = 3)
+legend("bottomright",
+       legend = c("South Korea", "Japan", "Australia"),
+       col = c(1,2,3), 
+       pch = c(16, 16, 16))
+dev.off()
+
+#Plot Approval Rate
+
+govsk <- dta$Approval_Rate[dta$Country =="South Korea"]/100
+govjp <- dta$Approval_Rate[dta$Country =="Japan"]/100
+govaus <- dta$Approval_Rate[dta$Country == "Australia"]/100
+govph <- dta$Approval_Rate[dta$Country == "Philippines"]/100
+govarg <- dta$Approval_Rate[dta$Country == "Argentina"]/100
+govbol <- dta$Approval_Rate[dta$Country == "Bolivia"]/100
+govbr <- dta$Approval_Rate[dta$Country == "Brazil"]/100
+govus <- dta$Approval_Rate[dta$Country == "United States"]/100
+govbul <- dta$Approval_Rate[dta$Country == "Bulgaria"]/100
+govhu <- dta$Approval_Rate[dta$Country == "Hungary"]/100
+govfr <- dta$Approval_Rate[dta$Country == "France"]/100
+
+summary(dta$Approval_Rate)
+
+pdf("Gov Approval.pdf")
+plot(x = govsk, 
+     y = yearsk,
+     xlab = "Year", 
+     ylab = "Approval Rate",
+     xlim = c(2008, 2018), 
+     ylim = c(0,0.9),
+     pch = 16,
+     main = "Government Approval")
+points(yearsk, govsk, col = 1)
+points(yearsk, govjp, col = 2)
+points(yearsk, govaus, col = 3)
+legend("bottomright",
+       legend = c("South Korea", "Japan", "Australia"),
+       col = c(1,2,3),
+       pch = c(16, 16, 16))
+dev.off()
+
+#Internet Censorship
+
+intsk <- dta$internet_censorship[dta$Country=="South Korea"]
+intjp <- dta$internet_censorship[dta$Country=="Japan"]
+intaus <- dta$internet_censorship[dta$Country == "Australia"]
+intph <- dta$internet_censorship[dta$Country == "Philippines"]
+intarg <- dta$internet_censorship[dta$Country == "Argentina"]
+intbol <- dta$internet_censorship[dta$Country == "Bolivia"]
+intbr <- dta$internet_censorship[dta$Country == "Brazil"]
+intus <- dta$internet_censorship[dta$Country == "United States"]
+intbul <- dta$internet_censorship[dta$Country == "Bulgaria"]
+inthu <- dta$internet_censorship[dta$Country == "Hungary"]
+intfr <- dta$internet_censorship[dta$Country == "France"]
+
+summary(dta$internet_censorship)
+
+pdf("Internet Freedom.pdf")
+plot(x = govsk, 
+     y = yearsk,
+     xlab = "Year", 
+     ylab = "Internet Censorship",
+     xlim = c(2008, 2018), 
+     ylim = c(-0.3,1.8),
+     main = "Freedom of the Internet",
+     type = "n")
+points(yearsk, intsk, pch = 16, col = 1)
+points(yearsk, intjp, pch = 16, col = 2)
+points(yearsk, intaus, pch = 16, col = 3)
+legend("bottomright",
+       legend = c("South Korea", "Japan", "Australia"),
+       col = c(1,2,3), 
+       pch = c(16, 16, 16))
+dev.off()
+
+#Internet Freedom Ordinal
+#V-Dem
+
+ordsk <- dta$v2mecenefi_ord[dta$country_name=="South Korea" & dta$year >= 2008]
+ordjp <- dta$v2mecenefi_ord[dta$country_name=="Japan" & dta$year >= 2008]
+ordaus <- dta$v2mecenefi_ord[dta$country_name=="South Korea" & dta$year >= 2008]
+ordarg <- dta$v2mecenefi_ord[dta$country_name=="Japan" & dta$year >= 2008]
+ordbol <- dta$v2mecenefi_ord[dta$country_name=="South Korea" & dta$year >= 2008]
+ordbul <- dta$v2mecenefi_ord[dta$country_name=="Japan" & dta$year >= 2008]
+ordus <- dta$v2mecenefi_ord[dta$country_name=="South Korea" & dta$year >= 2008]
+ordbr <- dta$v2mecenefi_ord[dta$country_name=="Japan" & dta$year >= 2008]
+ordph <- dta$v2mecenefi_ord[dta$country_name=="South Korea" & dta$year >= 2008]
+ordfr <- dta$v2mecenefi_ord[dta$country_name=="Japan" & dta$year >= 2008]
+ordhu <- dta$v2mecenefi_ord[dta$country_name=="South Korea" & dta$year >= 2008]
+
+summary(dta$v2mecenefi_ord)
+
+pdf("Internet Freedom East Asia ordinal.pdf")
+plot(x = govhk, 
+     y = yearhk,
+     xlab = "Year", 
+     ylab = "Internet Censorship",
+     xlim = c(2009, 2020), 
+     ylim = c(0,3),
+     main = "Freedom of the Internet",
+     type = "n")
+points(yearsk, freeordsk, pch = 16, col = "blue")
+points(yearhk, freeordhk, pch = 16)
+points(yearjp, freeordjp, pch = 18, col = "red")
+legend("bottomright",
+       legend = c("South Korea", "Hong Kong", "Japan"),
+       col = c("blue", "black", "red"), 
+       pch = c(16, 16, 18))
+dev.off()
+
+colnames(dta)
+
+usesk <- dta$Internet[dta$Country=="South Korea"]
+usejp <- dta$Internet[dta$Country=="Japan"]
+useaus <-dta$Internet[dta$Country == "Australia"]
+useph <- dta$Internet[dta$Country == "Philippines"]
+usearg <-dta$Internet[dta$Country == "Argentina"]
+usebr <- dta$Internet[dta$Country == "Brazil"]
+useus <- dta$Internet[dta$Country == "United States"]
+usebul<- dta$Internet[dta$Country == "Bulgaria"]
+usehu <- dta$Internet[dta$Country == "Hungary"]
+usefr <- dta$Internet[dta$Country == "France"]
+
+pdf("Internet users.pdf")
+plot(yearsk,
+     usesk,
+     xlab = "Year",
+     ylab = "Internet Users in % of Population",
+     main = "Percentage of Internet Users among Population, 2008-2018",
+     ylim = c(0,100),
+     type = "n")
+points(yearsk, usesk, pch = 20, col = 1)
+points(yearsk, usejp, pch = 20, col = 2)
+points(yearsk, useaus, pch = 20, col = 3)
+points(yearsk, useph, pch = 20, col = 4)
+points(yearsk, usearg, pch = 20, col = 5)
+points(yearsk, usebr, pch = 20, col = 6)
+points(yearsk, useus, pch = 20, col = 7)
+points(yearsk, usebul, pch = 20, col = 8)
+points(yearsk, usehu, pch = 20, col = 9)
+points(yearsk, usefr, pch = 20, col = 10)
+legend ("bottomright",
+        legend = c("KOR", "JPN", "AUS", "PHL", "ARG", "BRA", "USA", "BG", "HU", "FRA"),
+       col = c(1, 2, 3, 4, 5, 6, 7, 8, "darkorange", "darkmagenta"), 
+       pch = c(20, 20, 20, 20, 20, 20, 20, 20, 20, 20), 
+       cex = 0.8)
+dev.off()
+
